@@ -72,16 +72,10 @@ static void annotateKernel(terra_State *T, llvm::Module *M, llvm::Function *kern
     std::vector<METADATA_ROOT_TYPE *> vals;
     llvm::NamedMDNode *annot = M->getOrInsertNamedMetadata("nvvm.annotations");
     llvm::MDString *str = llvm::MDString::get(ctx, name);
-#if LLVM_VERSION <= 35
-    vals.push_back(kernel);
-    vals.push_back(str);
-    vals.push_back(llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), value));
-#else
     vals.push_back(llvm::ValueAsMetadata::get(kernel));
     vals.push_back(str);
     vals.push_back(llvm::ConstantAsMetadata::get(
             llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), value)));
-#endif
     llvm::MDNode *node = llvm::MDNode::get(ctx, vals);
     annot->addOperand(node);
 }
@@ -216,7 +210,11 @@ void moduleToPTX(terra_State *T, llvm::Module *M, int major, int minor, std::str
     PMB.OptLevel = 3;
     PMB.SizeLevel = 0;
     PMB.LoopVectorize = false;
+#if LLVM_VERSION <= 90
     auto FileType = llvm::TargetMachine::CGFT_AssemblyFile;
+#else
+    auto FileType = llvm::CGFT_AssemblyFile;
+#endif
 
     llvm::legacy::PassManager PM;
     TargetMachine->adjustPassManager(PMB);
@@ -244,7 +242,7 @@ void moduleToPTX(terra_State *T, llvm::Module *M, int major, int minor, std::str
     // 	printf("[CUDA] Result size: %s\n", outs.str().c_str());
     // }
 
-    (*buf) = dest.str();
+    (*buf) = dest.str().str();
 #endif
 }
 
@@ -295,29 +293,25 @@ int terra_toptx(lua_State *L) {
     for (llvm::Module::iterator it = M->begin(), end = M->end(); it != end; ++it) {
         const char *prefix = "cudart:";
         size_t prefixsize = strlen(prefix);
-        std::string name = it->getName();
+        std::string name = it->getName().str();
         if (name.size() >= prefixsize && name.substr(0, prefixsize) == prefix) {
             std::string shortname = name.substr(prefixsize);
             it->setName(shortname);
         }
         if (!it->isDeclaration()) {
-            it->setName(sanitizeName(it->getName()));
+            it->setName(sanitizeName(it->getName().str()));
         }
     }
     for (llvm::Module::global_iterator it = M->global_begin(), end = M->global_end();
          it != end; ++it) {
-        it->setName(sanitizeName(it->getName()));
+        it->setName(sanitizeName(it->getName().str()));
     }
 
     std::string ptx;
     moduleToPTX(T, M, major, minor, &ptx, libdevice);
     if (dumpmodule) {
         fprintf(stderr, "CUDA Module:\n");
-#if LLVM_VERSION < 38
-        M->dump();
-#else
         M->print(llvm::errs(), nullptr);
-#endif
         fprintf(stderr, "Generated PTX:\n%s\n", ptx.c_str());
     }
     lua_pushstring(L, ptx.c_str());

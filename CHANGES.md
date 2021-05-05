@@ -10,7 +10,7 @@ The following changes are included in this release:
 
 ## Added features
 
-  * Support for LLVM 3.8, 3.9, 5, 6, 7, 8 and 9
+  * Support for LLVM 3.8, 3.9, 5, 6, 7, 8, 9, 10 and 11
   * Support for CUDA 9.2
   * Support for Visual Studio 2015, 2017 and 2019 on Windows
   * New CMake-based build system replaces Make/NMake on all platforms
@@ -24,8 +24,12 @@ The following changes are included in this release:
 
 ## Deprecated features
 
-  * Deprecated support for all LLVM versions 3.4 and prior
-  * Deprecated support for Make (Linux, macOS) and NMake (Windows) build systems
+  * Deprecated support for Make (Linux, macOS) build system
+
+## Removed features
+
+  * Removed support for all LLVM versions 3.7 and prior
+  * Removed support for NMake (Windows) build system
 
 ## Changed behaviors
 

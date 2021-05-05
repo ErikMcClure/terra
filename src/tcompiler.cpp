@@ -73,11 +73,7 @@ TERRALIB_FUNCTIONS(DEF_LIBFUNCTION)
 static llvm_shutdown_obj llvmshutdownobj;
 #endif
 
-#if LLVM_VERSION < 38
-#define TERRA_DUMP_FUNCTION(t) (t)->dump()
-#define TERRA_DUMP_TYPE(t) (t)->dump()
-#define TERRA_DUMP_MODULE(t) (t)->dump()
-#elif LLVM_VERSION == 38
+#if LLVM_VERSION == 38
 #define TERRA_DUMP_FUNCTION(t) (t)->print(llvm::errs(), true)
 #define TERRA_DUMP_TYPE(t) (t)->print(llvm::errs(), true)
 #define TERRA_DUMP_MODULE(t) (t)->print(llvm::errs(), nullptr)
@@ -110,46 +106,18 @@ struct DisassembleFunctionListener : public JITEventListener {
 #if !defined(__arm__) && !defined(__linux__) && !defined(__FreeBSD__)
             name = name.substr(1);
 #endif
-            void *addr = (void *)CU->ee->getFunctionAddress(name);
+            void *addr = (void *)CU->ee->getFunctionAddress(name.str());
             if (addr) {
                 assert(addr);
                 TerraFunctionInfo &fi = T->C->functioninfo[addr];
                 fi.ctx = CU->TT->ctx;
-                fi.name = name;
+                fi.name = name.str();
                 fi.addr = addr;
                 fi.size = sz;
             }
         }
     }
 
-#if LLVM_VERSION >= 34 && LLVM_VERSION <= 35
-    virtual void NotifyObjectEmitted(const ObjectImage &Obj) {
-        for (object::symbol_iterator I = Obj.begin_symbols(), E = Obj.end_symbols();
-             I != E; ++I) {
-            StringRef name;
-            object::SymbolRef::Type t;
-            uint64_t sz;
-            I->getName(name);
-            I->getType(t);
-            I->getSize(sz);
-            InitializeDebugData(name, t, sz);
-        }
-    }
-#elif LLVM_VERSION == 36
-    virtual void NotifyObjectEmitted(const object::ObjectFile &Obj,
-                                     const RuntimeDyld::LoadedObjectInfo &L) {
-        for (auto I = Obj.symbol_begin(), E = Obj.symbol_end(); I != E; ++I) {
-            object::SymbolRef sym(I->getRawDataRefImpl(), &Obj);
-            StringRef name;
-            object::SymbolRef::Type t;
-            uint64_t sz;
-            sym.getName(name);
-            sym.getType(t);
-            sym.getSize(sz);
-            InitializeDebugData(name, t, sz);
-        }
-    }
-#else
     virtual void NotifyObjectEmitted(const object::ObjectFile &Obj,
                                      const RuntimeDyld::LoadedObjectInfo &L) {
         auto size_map = llvm::object::computeSymbolSizes(Obj);
@@ -164,7 +132,6 @@ struct DisassembleFunctionListener : public JITEventListener {
 #endif
         }
     }
-#endif
 };
 
 #if LLVM_VERSION > 40
@@ -261,11 +228,7 @@ static llvm::sys::Mutex terrainitlock;
 static int terrainitcount;
 bool OneTimeInit(struct terra_State *T) {
     bool success = true;
-#if LLVM_VERSION <= 35
-    terrainitlock.acquire();
-#else
     terrainitlock.lock();
-#endif
     terrainitcount++;
     if (terrainitcount == 1) {
 #ifdef PRINT_LLVM_TIMING_STATS
@@ -280,11 +243,7 @@ bool OneTimeInit(struct terra_State *T) {
         InitializeAllAsmParsers();
         InitializeAllTargetMCs();
     }
-#if LLVM_VERSION <= 35
-    terrainitlock.release();
-#else
     terrainitlock.unlock();
-#endif
     return success;
 }
 
@@ -310,7 +269,7 @@ int terra_inittarget(lua_State *L) {
     if (!lua_isnil(L, 2))
         TT->CPU = lua_tostring(L, 2);
     else
-        TT->CPU = llvm::sys::getHostCPUName();
+        TT->CPU = llvm::sys::getHostCPUName().str();
 
     if (!lua_isnil(L, 3))
         TT->Features = lua_tostring(L, 3);
@@ -333,12 +292,6 @@ int terra_inittarget(lua_State *L) {
     }
 
     TargetOptions options;
-    DEBUG_ONLY(T) {
-#if LLVM_VERSION <= 36
-        options.NoFramePointerElim = true;
-#endif
-    }
-
     if (lua_toboolean(L, 4)) {  // FloatABIHard boolean
         options.FloatABIType = FloatABI::Hard;
     } else {
@@ -392,13 +345,7 @@ int terra_initcompilationunit(lua_State *L) {
 
     CU->M = new Module("terra", *TT->ctx);
     CU->M->setTargetTriple(TT->Triple);
-#if LLVM_VERSION >= 38
     CU->M->setDataLayout(TT->tm->createDataLayout());
-#elif LLVM_VERSION == 37
-    CU->M->setDataLayout(*TT->tm->getDataLayout());
-#else
-    CU->M->setDataLayout(TT->tm->getDataLayout());
-#endif
 
     CU->mi = new ManualInliner(TT->tm, CU->M);
     CU->fpm = new FunctionPassManagerT(CU->M);
@@ -411,14 +358,11 @@ int terra_initcompilationunit(lua_State *L) {
 
 static void InitializeJIT(TerraCompilationUnit *CU) {
     if (CU->ee) return;  // already initialized
-    Module *topeemodule =
-            (CU->T->options.usemcjit) ? new Module("terra", *CU->TT->ctx) : CU->M;
+    Module *topeemodule = new Module("terra", *CU->TT->ctx);
 #ifdef _WIN32
     std::string MCJITTriple = CU->TT->Triple;
-#if LLVM_VERSION < 38
     MCJITTriple.append("-elf");  // on windows we need to use an elf container because
                                  // coff is not supported yet
-#endif
     topeemodule->setTargetTriple(MCJITTriple);
 #else
     topeemodule->setTargetTriple(CU->TT->Triple);
@@ -432,16 +376,16 @@ static void InitializeJIT(TerraCompilationUnit *CU) {
             .setMCPU(CU->TT->CPU)
             .setMAttrs(mattrs)
             .setEngineKind(EngineKind::JIT)
-#ifdef TERRA_CAN_USE_OLD_JIT
-            .setAllocateGVsWithCode(false)
-            .setUseMCJIT(CU->T->options.usemcjit)
-#endif
             .setTargetOptions(CU->TT->tm->Options)
 #if LLVM_VERSION < 50
             .setOptLevel(CodeGenOpt::Aggressive);
 #else
             .setOptLevel(CodeGenOpt::Aggressive)
+#if LLVM_VERSION <= 90
             .setMCJITMemoryManager(make_unique<TerraSectionMemoryManager>(CU))
+#else
+            .setMCJITMemoryManager(std::make_unique<TerraSectionMemoryManager>(CU))
+#endif
             .setUseOrcMCJITReplacement(true);
 #endif
 
@@ -469,15 +413,6 @@ int terra_compilerinit(struct terra_State *T) {
     T->C = new terra_CompilerState();
     memset(T->C, 0, sizeof(terra_CompilerState));
     T->C->nreferences = 1;
-#ifndef TERRA_CAN_USE_OLD_JIT
-    T->options.usemcjit = 1;  // force mcjit use, since old JIT is no longer supported.
-#endif
-    if (T->options.usemcjit) {
-#ifndef TERRA_CAN_USE_MCJIT
-        terra_pusherror(T, "mcjit is not supported using LLVM %d", LLVM_VERSION);
-        return LUA_ERRRUN;
-#endif
-    }
     return 0;
 }
 void freetarget(TerraTarget *TT) {
@@ -504,8 +439,7 @@ static void freecompilationunit(TerraCompilationUnit *CU) {
             delete CU->jiteventlistener;
             delete CU->ee;
         }
-        if (CU->T->options.usemcjit || !CU->ee)  // we own the module so we delete it
-            delete CU->M;
+        delete CU->M;  // we own the module so we delete it
         freetarget(CU->TT);
         terra_compilerfree(CU->C);  // decrement reference count to compiler
         delete CU;
@@ -583,7 +517,11 @@ class Types {
                     Type *baseType = ttype->type;
                     t->issigned = ttype->issigned;
                     t->islogical = ttype->islogical;
+#if LLVM_VERSION < 90
                     t->type = VectorType::get(baseType, N);
+#else
+                    t->type = VectorType::get(baseType, N, false);
+#endif
                 } break;
                 case T_primitive: {
                     CreatePrimitiveType(typ, t);
@@ -792,12 +730,8 @@ static AllocaInst *CreateAlloca(IRBuilder<> *B, Type *Ty, Value *ArraySize = 0,
 
 static Value *CreateConstGEP2_32(IRBuilder<> *B, Value *Ptr, unsigned Idx0,
                                  unsigned Idx1) {
-#if LLVM_VERSION <= 36
-    return B->CreateConstGEP2_32(Ptr, Idx0, Idx1);
-#else
     return B->CreateConstGEP2_32(Ptr->getType()->getPointerElementType(), Ptr, Idx0,
                                  Idx1);
-#endif
 }
 
 // functions that handle the details of the x86_64 ABI (this really should be handled by
@@ -903,8 +837,12 @@ struct CCallingConv {
                     case 8:
                         return (C_SSE_DOUBLE == clz)
                                        ? Type::getDoubleTy(*CU->TT->ctx)
-                                       : VectorType::get(Type::getFloatTy(*CU->TT->ctx),
-                                                         2);
+                                       : VectorType::get(Type::getFloatTy(*CU->TT->ctx), 2
+#if LLVM_VERSION >= 90
+                                                         ,
+                                                         false
+#endif
+                                         );
                     default:
                         assert(!"unexpected size for floating point class");
                 }
@@ -1054,7 +992,11 @@ struct CCallingConv {
             Value *addr_dest = B->CreateBitCast(addr_dst, t);
             Value *addr_source = B->CreateBitCast(addr_src, t);
             uint64_t size = 0;
+#if LLVM_VERSION <= 90
             unsigned a1 = 0;
+#else
+            MaybeAlign a1(0);
+#endif
             if (t1->isStructTy()) {
                 // size of bytes to copy
                 StructType *st = cast<StructType>(t1);
@@ -1067,7 +1009,11 @@ struct CCallingConv {
                     StoreInst *st = B->CreateStore(src, addr_dst);
                     return st;
                 }
+#if LLVM_VERSION <= 90
                 a1 = CU->getDataLayout().getABITypeAlignment(t1);
+#else
+                a1 = MaybeAlign(CU->getDataLayout().getABITypeAlignment(t1));
+#endif
             } else
                 assert(!"unhandled type in emitStoreAgg");
             Value *size_v = ConstantInt::get(Type::getInt64Ty(*CU->TT->ctx), size);
@@ -1088,12 +1034,6 @@ struct CCallingConv {
         Classification *info = ClassifyFunction(ftype);
         Function *fn = Function::Create(info->fntype, Function::InternalLinkage, name, M);
         AttributeFnOrCall(fn, info);
-#if LLVM_VERSION > 32 && defined(__arm__)
-        fn->addAttribute(llvm::AttributeSet::FunctionIndex, llvm::Attribute::NoUnwind);
-#endif
-#if LLVM_VERSION >= 37
-        DEBUG_ONLY(T) { fn->addFnAttr("no-frame-pointer-elim", "true"); }
-#endif
         return fn;
     }
 
@@ -1202,7 +1142,7 @@ struct CCallingConv {
         // function pointers are stored as &int8 to avoid calling convension issues
         // cast it back to the real pointer type right before calling it
         callee = B->CreateBitCast(callee, Ptr(info.fntype));
-        CallInst *call = B->CreateCall(callee, arguments);
+        CallInst *call = B->CreateCall(info.fntype, callee, arguments);
         // annotate call with byval and sret
         AttributeFnOrCall(call, &info);
 
@@ -1351,11 +1291,7 @@ struct FunctionEmitter {
             breakpoints;  // stack of basic blocks where a break statement should go
 
     DIBuilder *DB;
-#if LLVM_VERSION >= 37
     DISubprogram *SP;
-#else
-    DISubprogram SP;
-#endif
 
     StringMap<MDNode *> filenamecache;  // map from filename to lexical scope object
                                         // representing file.
@@ -1459,14 +1395,14 @@ struct FunctionEmitter {
                         scc.push_back(f->func);
                         f->onstack = false;
                         VERBOSE_ONLY(T) {
-                            std::string s = f->func->getName();
+                            std::string s = f->func->getName().str();
                             printf("%s%s", s.c_str(), (fstate == f) ? "\n" : " ");
                         }
                     } while (fstate != f);
                     CU->mi->run(scc.begin(), scc.end());
                     for (size_t i = 0; i < scc.size(); i++) {
                         VERBOSE_ONLY(T) {
-                            std::string s = scc[i]->getName();
+                            std::string s = scc[i]->getName().str();
                             printf("optimizing %s\n", s.c_str());
                         }
                         CU->fpm->run(*scc[i]);
@@ -1957,37 +1893,66 @@ struct FunctionEmitter {
             Value *addr_src = l->getOperand(0);
             addr_src = B->CreateBitCast(addr_src, t);
             uint64_t size = 0;
+#if LLVM_VERSION <= 90
             unsigned a1 = 0;
+#else
+            MaybeAlign a1(0);
+#endif
             if (t1->isStructTy()) {
                 // size of bytes to copy
                 StructType *st = cast<StructType>(t1);
                 const StructLayout *sl = CU->getDataLayout().getStructLayout(st);
                 size = sl->getSizeInBytes();
+#if LLVM_VERSION <= 90
                 a1 = hasAlignment ? alignment : sl->getAlignment();
+#else
+                a1 = hasAlignment ? MaybeAlign(alignment) : sl->getAlignment();
+#endif
             } else if (t1->isArrayTy() && (CU->getDataLayout().getTypeAllocSize(t1) >=
                                            MEM_ARRAY_THRESHOLD)) {
                 size = CU->getDataLayout().getTypeAllocSize(t1);
+#if LLVM_VERSION <= 90
                 a1 = hasAlignment ? alignment
                                   : CU->getDataLayout().getABITypeAlignment(t1);
+#else
+                a1 = MaybeAlign(hasAlignment
+                                        ? alignment
+                                        : CU->getDataLayout().getABITypeAlignment(t1));
+#endif
             } else {
                 StoreInst *st = B->CreateStore(value, addr);
                 if (isVolatile) st->setVolatile(true);
+#if LLVM_VERSION <= 90
                 if (hasAlignment) st->setAlignment(alignment);
+#elif LLVM_VERSION <= 100
+                if (hasAlignment) st->setAlignment(MaybeAlign(alignment));
+#else
+                if (hasAlignment) st->setAlignment(Align(alignment));
+#endif
                 return st;
             }
             Value *size_v = ConstantInt::get(Type::getInt64Ty(*CU->TT->ctx), size);
             // perform the copy
 #if LLVM_VERSION <= 60
             Value *m = B->CreateMemCpy(addr_dst, addr_src, size_v, a1, isVolatile);
-#else
+#elif LLVM_VERSION <= 90
             Value *m = B->CreateMemCpy(addr_dst, a1, addr_src, l->getAlignment(), size_v,
                                        isVolatile);
+#else
+            Value *m = B->CreateMemCpy(addr_dst, a1, addr_src,
+                                       MaybeAlign(l->getAlignment()), size_v, isVolatile);
 #endif
             return m;
         } else {
             StoreInst *st = B->CreateStore(value, addr);
             if (isVolatile) st->setVolatile(true);
+#if LLVM_VERSION <= 90
             if (hasAlignment) st->setAlignment(alignment);
+#elif LLVM_VERSION <= 100
+            if (hasAlignment) st->setAlignment(MaybeAlign(alignment));
+#else
+            if (hasAlignment) st->setAlignment(Align(alignment));
+#endif
             return st;
         }
     }
@@ -2312,10 +2277,10 @@ struct FunctionEmitter {
                 std::vector<Type *> ptypes;
                 for (size_t i = 0; i < values.size(); i++)
                     ptypes.push_back(values[i]->getType());
-                Value *fn = InlineAsm::get(FunctionType::get(rtype, ptypes, false),
-                                           exp->string("asm"), exp->string("constraints"),
-                                           exp->boolean("volatile"));
-                Value *call = B->CreateCall(fn, values);
+                InlineAsm *fn = InlineAsm::get(
+                        FunctionType::get(rtype, ptypes, false), exp->string("asm"),
+                        exp->string("constraints"), exp->boolean("volatile"));
+                Value *call = B->CreateCall(fn->getFunctionType(), fn, values);
                 return (isvoid) ? UndefValue::get(ttype) : call;
             } break;
             case T_attrload: {
@@ -2327,15 +2292,17 @@ struct FunctionEmitter {
                 LoadInst *l = B->CreateLoad(emitExp(&addr));
                 if (attr.hasfield("alignment")) {
                     int alignment = attr.number("alignment");
+#if LLVM_VERSION <= 90
                     l->setAlignment(alignment);
+#elif LLVM_VERSION <= 100
+                    l->setAlignment(MaybeAlign(alignment));
+#else
+                    l->setAlignment(Align(alignment));
+#endif
                 }
                 if (attr.boolean("nontemporal")) {
-#if LLVM_VERSION <= 35
-                    auto list = ConstantInt::get(Type::getInt32Ty(*CU->TT->ctx), 1);
-#else
                     auto list = ConstantAsMetadata::get(
                             ConstantInt::get(Type::getInt32Ty(*CU->TT->ctx), 1));
-#endif
                     l->setMetadata("nontemporal", MDNode::get(*CU->TT->ctx, list));
                 }
                 l->setVolatile(attr.boolean("isvolatile"));
@@ -2356,12 +2323,8 @@ struct FunctionEmitter {
                         emitStore(valueexp, addrexp, isvolatile, hasalignment, alignment);
                 StoreInst *store = dyn_cast<StoreInst>(s);
                 if (store && attr.boolean("nontemporal")) {
-#if LLVM_VERSION <= 35
-                    auto list = ConstantInt::get(Type::getInt32Ty(*CU->TT->ctx), 1);
-#else
                     auto list = ConstantAsMetadata::get(
                             ConstantInt::get(Type::getInt32Ty(*CU->TT->ctx), 1));
-#endif
                     store->setMetadata("nontemporal", MDNode::get(*CU->TT->ctx, list));
                 }
                 return Constant::getNullValue(typeOfValue(exp)->type);
@@ -2388,7 +2351,11 @@ struct FunctionEmitter {
         Type *resultType = Type::getInt1Ty(*CU->TT->ctx);
         if (cond->getType()->isVectorTy()) {
             VectorType *vt = cast<VectorType>(cond->getType());
+#if LLVM_VERSION < 90
             resultType = VectorType::get(resultType, vt->getNumElements());
+#else
+            resultType = VectorType::get(resultType, vt->getNumElements(), false);
+#endif
         }
         return B->CreateTrunc(cond, resultType);
     }
@@ -2459,19 +2426,12 @@ struct FunctionEmitter {
             DICompileUnit *CU = DB->createCompileUnit(
                     dwarf::DW_LANG_C89, DB->createFile("compilationunit", "."), "terra",
                     true, "", 0);
-#elif LLVM_VERSION >= 37
+#else
             DICompileUnit *CU = DB->createCompileUnit(1, "compilationunit", ".", "terra",
                                                       true, "", 0);
-#else
-            DICompileUnit CU = DB->createCompileUnit(1, "compilationunit", ".", "terra",
-                                                     true, "", 0);
 #endif
 
-#if LLVM_VERSION >= 36
             auto TA = DB->getOrCreateTypeArray(ArrayRef<Metadata *>());
-#else
-            auto TA = DB->getOrCreateArray(ArrayRef<Value *>());
-#endif
 
 #if LLVM_VERSION >= 80
             SP = DB->createFunction(
@@ -2485,15 +2445,11 @@ struct FunctionEmitter {
                                     file, lineno, DB->createSubroutineType(TA), false,
                                     true, 0, llvm::DINode::FlagZero, true);
             fstate->func->setSubprogram(SP);
-#elif LLVM_VERSION >= 37
+#else
             SP = DB->createFunction(CU, fstate->func->getName(), fstate->func->getName(),
                                     file, lineno, DB->createSubroutineType(TA), false,
                                     true, 0, 0, true);
             fstate->func->setSubprogram(SP);
-#else
-            SP = DB->createFunction(CU, fstate->func->getName(), fstate->func->getName(),
-                                    file, lineno, DB->createSubroutineType(file, TA),
-                                    false, true, 0, 0, true, fstate->func);
 #endif
 
             if (!M->getModuleFlagsMetadata()) {
@@ -3011,12 +2967,11 @@ static int terra_llvmsizeof(lua_State *L) {
     return 1;
 }
 
-#ifdef TERRA_CAN_USE_MCJIT
 static void *GetGlobalValueAddress(TerraCompilationUnit *CU, StringRef Name) {
     if (CU->T->options.debug > 1)
-        return sys::DynamicLibrary::SearchForAddressOfSymbol(Name);
+        return sys::DynamicLibrary::SearchForAddressOfSymbol(Name.str());
 
-    return (void *)CU->ee->getGlobalValueAddress(Name);
+    return (void *)CU->ee->getGlobalValueAddress(Name.str());
 }
 static bool MCJITShouldCopy(GlobalValue *G, void *data) {
     TerraCompilationUnit *CU = (TerraCompilationUnit *)data;
@@ -3024,7 +2979,6 @@ static bool MCJITShouldCopy(GlobalValue *G, void *data) {
         return 0 == GetGlobalValueAddress(CU, G->getName());
     return true;
 }
-#endif
 
 static bool SaveSharedObject(TerraCompilationUnit *CU, Module *M,
                              std::vector<const char *> *args, const char *filename);
@@ -3032,40 +2986,31 @@ static bool SaveSharedObject(TerraCompilationUnit *CU, Module *M,
 static void *JITGlobalValue(TerraCompilationUnit *CU, GlobalValue *gv) {
     InitializeJIT(CU);
     ExecutionEngine *ee = CU->ee;
-    if (CU->T->options.usemcjit) {
-#ifdef TERRA_CAN_USE_MCJIT
-        if (gv->isDeclaration()) {
-            StringRef name = gv->getName();
-            if (name.startswith(
-                        "\01"))  // remove asm renaming tag before looking for symbol
-                name = name.substr(1);
-            return ee->getPointerToNamedFunction(name);
-        }
-        void *ptr = GetGlobalValueAddress(CU, gv->getName());
-        if (ptr) {
-            return ptr;
-        }
-        llvm::ValueToValueMapTy VMap;
-        Module *m = llvmutil_extractmodulewithproperties(
-                gv->getName(), gv->getParent(), &gv, 1, MCJITShouldCopy, CU, VMap);
-
-        if (CU->T->options.debug > 1) {
-            llvm::SmallString<256> tmpname;
-            llvmutil_createtemporaryfile("terra", "so", tmpname);
-            if (SaveSharedObject(CU, m, NULL, tmpname.c_str())) lua_error(CU->T->L);
-            sys::DynamicLibrary::LoadLibraryPermanently(tmpname.c_str());
-            void *result = sys::DynamicLibrary::SearchForAddressOfSymbol(gv->getName());
-            assert(result);
-            return result;
-        }
-        ee->addModule(UNIQUEIFY(Module, m));
-        return (void *)ee->getGlobalValueAddress(gv->getName());
-#else
-        return NULL;
-#endif
-    } else {
-        return ee->getPointerToGlobal(gv);
+    if (gv->isDeclaration()) {
+        StringRef name = gv->getName();
+        if (name.startswith("\01"))  // remove asm renaming tag before looking for symbol
+            name = name.substr(1);
+        return ee->getPointerToNamedFunction(name);
     }
+    void *ptr = GetGlobalValueAddress(CU, gv->getName());
+    if (ptr) {
+        return ptr;
+    }
+    llvm::ValueToValueMapTy VMap;
+    Module *m = llvmutil_extractmodulewithproperties(gv->getName(), gv->getParent(), &gv,
+                                                     1, MCJITShouldCopy, CU, VMap);
+
+    if (CU->T->options.debug > 1) {
+        llvm::SmallString<256> tmpname;
+        llvmutil_createtemporaryfile("terra", "so", tmpname);
+        if (SaveSharedObject(CU, m, NULL, tmpname.c_str())) lua_error(CU->T->L);
+        sys::DynamicLibrary::LoadLibraryPermanently(tmpname.c_str());
+        void *result = sys::DynamicLibrary::SearchForAddressOfSymbol(gv->getName().str());
+        assert(result);
+        return result;
+    }
+    ee->addModule(UNIQUEIFY(Module, m));
+    return (void *)ee->getGlobalValueAddress(gv->getName().str());
 }
 
 static int terra_jit(lua_State *L) {
@@ -3091,22 +3036,13 @@ static int terra_deletefunction(lua_State *L) {
         printf("deleting function: %s\n", func->getName().str().c_str());
     }
     // MCJIT can't free individual functions, so we need to leak the generated code
-#ifdef TERRA_CAN_USE_OLD_JIT
-    if (!CU->T->options.usemcjit && CU->ee->getPointerToGlobalIfAvailable(func)) {
-        VERBOSE_ONLY(CU->T) { printf("... and deleting generated code\n"); }
-        CU->ee->freeMachineCodeForFunction(func);
+
+    // for MCJIT, we need to keep the declaration so
+    // another function doesn't get the same name
+    VERBOSE_ONLY(CU->T) {
+        printf("... uses not empty, removing body but keeping declaration.\n");
     }
-#endif
-    if (!func->use_empty() ||
-        CU->T->options.usemcjit) {  // for MCJIT, we need to keep the declaration so
-                                    // another function doesn't get the same name
-        VERBOSE_ONLY(CU->T) {
-            printf("... uses not empty, removing body but keeping declaration.\n");
-        }
-        func->deleteBody();
-    } else {
-        CU->mi->eraseFunction(func);
-    }
+    func->deleteBody();
     VERBOSE_ONLY(CU->T) { printf("... finish delete.\n"); }
     fstate->func = NULL;
     freecompilationunit(CU);
@@ -3129,13 +3065,8 @@ static int terra_disassemble(lua_State *L) {
 
 static bool FindLinker(terra_State *T, LLVM_PATH_TYPE *linker, const char *target) {
 #ifndef _WIN32
-#if LLVM_VERSION >= 36
     *linker = *sys::findProgramByName("gcc");
     return *linker == "";
-#else
-    *linker = sys::FindProgramByName("gcc");
-    return *linker == "";
-#endif
 #else
     lua_getfield(T->L, LUA_GLOBALSINDEX, "terra");
     lua_getfield(T->L, -1, "getvclinker");
@@ -3359,16 +3290,12 @@ static int terra_linkllvmimpl(lua_State *L) {
             terra_reporterror(T, "linkllvm(%s): %s\n", filename,
                               mb.getError().message().c_str());
     }
-#if LLVM_VERSION == 36
-    ErrorOr<Module *> mm = parseBitcodeFile(mb.get()->getMemBufferRef(), *TT->ctx);
-#elif LLVM_VERSION >= 50
+#if LLVM_VERSION >= 50
     Expected<std::unique_ptr<Module> > mm =
             parseBitcodeFile(mb.get()->getMemBufferRef(), *TT->ctx);
-#elif LLVM_VERSION >= 37
+#else
     ErrorOr<std::unique_ptr<Module> > mm =
             parseBitcodeFile(mb.get()->getMemBufferRef(), *TT->ctx);
-#else
-    ErrorOr<Module *> mm = parseBitcodeFile(mb.get().get(), *TT->ctx);
 #endif
     if (!mm) {
         if (fromstring) {
@@ -3394,11 +3321,7 @@ static int terra_linkllvmimpl(lua_State *L) {
 #endif
         }
     }
-#if LLVM_VERSION >= 37
     Module *M = mm.get().release();
-#else
-    Module *M = mm.get();
-#endif
     M->setTargetTriple(TT->Triple);
 #if LLVM_VERSION < 39
     char *err;

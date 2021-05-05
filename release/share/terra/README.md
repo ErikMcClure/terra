@@ -4,7 +4,7 @@ Getting Started with Terra
 _Zach DeVito_ (zdevito at cs dot stanford dot edu)
 
 [terralang.org](http://terralang.org)
-[![Build Status](https://travis-ci.org/terralang/terra.svg?branch=develop)](https://travis-ci.org/terralang/terra)
+[![Build Status](https://github.com/terralang/terra/workflows/CI/badge.svg)](https://github.com/terralang/terra/actions)
 [![Build Status](https://ci.appveyor.com/api/projects/status/github/terralang/terra?branch=master&svg=true)](https://ci.appveyor.com/project/terralang/terra/branch/master)
 
 Terra is a new low-level system programming language that is designed to interoperate seamlessly with the Lua programming language. It is also backwards compatible with (and embeddable in) existing C code. Like C, Terra is a monomorphic, statically-typed, compiled language with manual memory management. But unlike C, it is designed to make interaction with Lua easy. Terra code shares Lua's syntax and control-flow constructs. It is easy to call Lua functions from Terra (or Terra functions from Lua).
@@ -124,10 +124,10 @@ Ubuntu 16.04 and older. Please either upgrade to LLVM 6 or Ubuntu
 18.04, or build LLVM from source, or else use GNU Make on these
 systems (see below).
 
-Terra also supports an older build system based on GNU Make (for
-Linux, macOS) and NMake (for Windows). These build systems are both
-deprecated, and in the vast majority of circumstances CMake is both
-preferred and substantially more flexible.
+Terra also supports an older build system based on GNU Make (for Linux
+and macOS only). This build system is deprecated, and in the vast
+majority of circumstances CMake is both preferred and substantially
+more flexible.
 
 ### Supported LLVM Versions ###
 
@@ -135,9 +135,6 @@ The current recommended version of LLVM is **6.0**. The following versions are a
 
 | Version | CI Coverage | CUDA | Notes |
 | ------- | ----------- | ---- | ----- |
-| 3.5 | :heavy_check_mark: | :heavy_check_mark: | supports debug info |
-| 3.6 | | | |
-| 3.7 | | | |
 | 3.8 | :heavy_check_mark: | :heavy_check_mark: | |
 | 3.9 | | | |
 | 5.0 | :heavy_check_mark: | :heavy_check_mark: | |
@@ -145,6 +142,16 @@ The current recommended version of LLVM is **6.0**. The following versions are a
 | 7.0 | :heavy_check_mark: | :heavy_check_mark: | requires CMake |
 | 8.0 | :heavy_check_mark: | :heavy_check_mark: | |
 | 9.0 | :heavy_check_mark: | :heavy_check_mark: | |
+| 10.0 | :heavy_check_mark: | :heavy_check_mark: | |
+| 11.0 | :heavy_check_mark: | :heavy_check_mark: | |
+
+The following versions were previously supported by Terra:
+
+| Version | Last Supported Release |
+| ------- | ----- |
+| 3.5 | 1.0.0-beta3 |
+| 3.6 | 1.0.0-beta3 |
+| 3.7 | 1.0.0-beta3 |
 
 ### Instructions for Building LLVM from Source
 
@@ -271,17 +278,6 @@ variables) as on other OSes.
 Note that, even after Terra has been built, it is still necessary to
 run it from the Visual Studio Command Prompt so that it can detect the
 location of the system header files.
-
-### Building with NMake (Windows)
-
-Note: This build system is deprecated. Please use CMake instead (see
-above).
-
-Terra also has an older NMake build for Windows, though it is no
-longer recommended. For instructions, see [the msvc
-directory](https://github.com/terralang/terra/blob/master/msvc/README.md).
-
-Note that you will need to build LuaJIT yourself (unlike CMake).
 
 Hello, World
 ============

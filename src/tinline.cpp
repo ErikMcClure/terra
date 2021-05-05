@@ -10,24 +10,12 @@
 using namespace llvm;
 
 ManualInliner::ManualInliner(TargetMachine *TM, Module *m) {
-// Trick the Module-at-a-time inliner into running on a single SCC
-// First we run it on the (currently empty) module to initialize
-// the inlining pass with the Analysis passes it needs.
-#if LLVM_VERSION <= 35
-    DataLayout *TD = new DataLayout(*TM->getDataLayout());
-#endif
+    // Trick the Module-at-a-time inliner into running on a single SCC
+    // First we run it on the (currently empty) module to initialize
+    // the inlining pass with the Analysis passes it needs.
 
-#if LLVM_VERSION <= 35
-    PM.add(new DataLayoutPass(*TD));
-#elif LLVM_VERSION <= 36
-    PM.add(new DataLayoutPass());
-#else
     PM.add(createTargetTransformInfoWrapperPass(TM->getTargetIRAnalysis()));
-#endif
 
-#if LLVM_VERSION >= 33 && LLVM_VERSION <= 36
-    TM->addAnalysisPasses(PM);
-#endif
     SI = (CallGraphSCCPass *)createFunctionInliningPass();
     PM.add(SI);
     PM.run(*m);
@@ -56,16 +44,20 @@ void ManualInliner::run(std::vector<Function *>::iterator fbegin,
         CallGraphNode *n = CG->getOrInsertFunction(F);
         for (Function::iterator BB = F->begin(), BBE = F->end(); BB != BBE; ++BB)
             for (BasicBlock::iterator II = BB->begin(), IE = BB->end(); II != IE; ++II) {
+#if LLVM_VERSION < 90
                 CallSite CS(cast<Value>(II));
+#else
+                CallBase *CS(dyn_cast<CallBase>(II));
+#endif
                 if (CS) {
+#if LLVM_VERSION < 90
                     const Function *Callee = CS.getCalledFunction();
+#else
+                    const Function *Callee = CS->getCalledFunction();
+#endif
                     if (Callee && !Callee->isIntrinsic()) {
                         CallGraphNode *n2 = CG->getOrInsertFunction(Callee);
-#if LLVM_VERSION < 90
                         n->addCalledFunction(CS, n2);
-#else
-                        n->addCalledFunction(cast<CallBase>(II), n2);
-#endif
                     }
                 }
             }

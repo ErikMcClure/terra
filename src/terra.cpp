@@ -412,9 +412,6 @@ int terra_initwithoptions(lua_State *L, terra_Options *options) {
     memset(T, 0, sizeof(terra_State));  // some of lua stuff expects pointers to be null
                                         // on entry
     T->options = *options;
-#ifdef __arm__
-    T->options.usemcjit = true;  // force MCJIT since old JIT is partially broken on ARM
-#endif
     T->numlivefunctions = 1;
     T->L = L;
     assert(T->L);
@@ -476,6 +473,8 @@ int terra_initwithoptions(lua_State *L, terra_Options *options) {
 
     lua_pushstring(T->L, TERRA_VERSION_STRING);
     lua_setfield(T->L, -2, "version");
+    lua_pushinteger(T->L, LLVM_VERSION);
+    lua_setfield(L, -2, "llvm_version");
 
     lua_newtable(T->L);
     lua_setfield(T->L, -2, "_trees");  // to hold parser generated trees
@@ -606,7 +605,6 @@ extern "C" int luaopen_terra(lua_State *L) {
     memset(&options, 0, sizeof(terra_Options));
     if (!lua_isnil(L, 1)) options.verbose = lua_tonumber(L, 1);
     if (!lua_isnil(L, 2)) options.debug = lua_tonumber(L, 2);
-    if (!lua_isnil(L, 3)) options.usemcjit = lua_tonumber(L, 3);
     if (terra_initwithoptions(L, &options)) lua_error(L);
     return 0;
 }
