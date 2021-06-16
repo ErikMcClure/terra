@@ -17,6 +17,8 @@ typedef struct { /* default values are 0 */
     int verbose; /*-v, print more debugging info (can be 1 for some, 2 for more) */
     int debug;   /*-g, turn on debugging symbols and base pointers */
     char *cmd_line_chunk;
+    char **args;
+    size_t n_args;
 } terra_Options;
 int terra_initwithoptions(lua_State *L, terra_Options *options);
 
