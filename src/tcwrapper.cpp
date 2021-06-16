@@ -1097,6 +1097,10 @@ int include_c(lua_State *L) {
         args.push_back(TT->Features.c_str());
     }
 
+    for (int i = 0; i < T->c_args.size(); ++i) {
+        args.push_back(T->c_args[i].c_str());
+    }
+
 #ifdef _WIN32
     args.push_back("-fms-extensions");
     args.push_back("-fms-volatile");

@@ -6,6 +6,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <vector>
+#include <string>
 #include "terra.h"
 
 struct terra_CompilerState;
@@ -18,6 +19,7 @@ typedef struct terra_State {
     struct terra_CUDAState *cuda;
     terra_Options options;
     std::vector<TerraTarget *> targets;
+    std::vector<std::string> c_args; // These are C/C++ compiler flags we pass-through to clang
     // for parser
     int nCcalls;
     char tstring_table;  //&tstring_table is used as the key into the lua registry that

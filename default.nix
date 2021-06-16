@@ -54,7 +54,7 @@ in stdenv.mkDerivation rec {
   hardeningDisable = [ "fortify" ];
   outputs = [ "bin" "dev" "out" "static" ];
 
-  patches = [ ./nix/cflags.patch ./nix/disable-luajit-file-download.patch ];
+  patches = [ ./nix/disable-luajit-file-download.patch ];
 
   postPatch = ''
     substituteInPlace src/terralib.lua \

@@ -411,6 +411,8 @@ int terra_initwithoptions(lua_State *L, terra_Options *options) {
     assert(T);
     memset(T, 0, sizeof(terra_State));  // some of lua stuff expects pointers to be null
                                         // on entry
+
+    new (T) terra_State();  // Call the constructor properly because this is C++, not C
     T->options = *options;
     T->numlivefunctions = 1;
     T->L = L;
@@ -428,6 +430,12 @@ int terra_initwithoptions(lua_State *L, terra_Options *options) {
     int err = terra_compilerinit(T);
     if (err) {
         return err;
+    }
+
+    if (options->args) {
+        for (int i = 0; i < options->n_args; ++i) {
+            T->c_args.push_back(options->args[i]);
+        }
     }
 
 #ifdef _WIN32
@@ -505,6 +513,7 @@ static int terra_free(lua_State *L) {
     for (TerraTarget *TT : T->targets) {
         freetarget(TT);
     }
+    T->~terra_State();
     return 0;
 }
 

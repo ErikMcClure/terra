@@ -6,6 +6,9 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
+#include <vector>
+#include <string>
 #ifdef _WIN32
 #include <io.h>
 #include "ext/getopt.h"
@@ -124,6 +127,10 @@ int main(int argc, char **argv) {
         dotty(L);
     }
 
+    if (options.args) {
+        free(options.args);
+    }
+
     lua_close(L);
     terra_llvmshutdown();
 
@@ -139,27 +146,54 @@ void usage() {
            "    -h print this help message\n"
            "    -i enter the REPL after processing source files\n"
            "    -e 'chunk' : execute command-line 'chunk' of code\n"
+           "    -frandom-seed='seed' seeds the random number generator with 'seed'\n"
+           "    -isystem='directory' add to list of include directories for compiling C\n"
            "    -  Execute stdin instead of script and stop parsing options\n");
+}
+
+static inline int __ac_X31_hash_string(const char *s) {
+    int h = (int)*s;
+    if (h)
+        for (++s; *s; ++s) h = (h << 5) - h + (int)*s;
+    return h;
 }
 
 void parse_args(lua_State *L, int argc, char **argv, terra_Options *options,
                 bool *interactive, int *begin_script) {
     int ch;
+    std::vector<std::string> passthrough;
     static struct option longopts[] = {{"help", 0, NULL, 'h'},
                                        {"verbose", 0, NULL, 'v'},
                                        {"debugsymbols", 0, NULL, 'g'},
-                                       {"interactive", 0, NULL, 'i'},
+                                       {"i", optional_argument, NULL, 'i'},
                                        {"execute", required_argument, NULL, 'e'},
+                                       {"f", required_argument, NULL, 'f'},
                                        {NULL, 0, NULL, 0}};
+    static const int RSEED_COUNT = strlen("random-seed=");
+    static const int SYSTEM_COUNT = strlen("system=");
+
     /*  Parse commandline options  */
     opterr = 0;
-    while ((ch = getopt_long(argc, argv, "+hvgie:p:", longopts, NULL)) != -1) {
+
+    while ((ch = getopt_long(argc, argv, "+hvgi:e:p:f:", longopts, NULL)) != -1) {
         switch (ch) {
             case 'v':
                 options->verbose++;
                 break;
             case 'i':
-                *interactive = true;
+                if (!optarg || !strcmp(optarg, "nteractive")) {
+                    *interactive = true;
+                } else if (strlen(optarg) > SYSTEM_COUNT &&
+                           !strncmp("system=", optarg, SYSTEM_COUNT)) {
+                    passthrough.push_back("-i");
+                    passthrough.back() += optarg;
+                } else if (!strcmp("system", optarg)) {
+                    passthrough.push_back("-isystem ");
+                    passthrough.back() += argv[optind++];
+                } else {
+                    usage();
+                    exit(-1);
+                }
                 break;
             case 'g':
                 options->debug++;
@@ -168,7 +202,21 @@ void parse_args(lua_State *L, int argc, char **argv, terra_Options *options,
                 options->cmd_line_chunk = (char *)malloc(strlen(optarg) + 1);
                 strcpy(options->cmd_line_chunk, optarg);
                 break;
+            case 'f':
+                if (!optarg || strlen(optarg) <= RSEED_COUNT) {
+                    usage();
+                    exit(-1);
+                }
+                srand(__ac_X31_hash_string(optarg + RSEED_COUNT));
+                passthrough.push_back("-f");
+                passthrough.back() += optarg;
+                break;
             case ':':
+                // Optional parameters are a GNU extension, so we just check for -i here
+                if (!strcmp(argv[optind - 1], "-i")) {
+                    *interactive = true;
+                    break;
+                }
             case 'h':
             default:
                 usage();
@@ -177,6 +225,25 @@ void parse_args(lua_State *L, int argc, char **argv, terra_Options *options,
         }
     }
     *begin_script = optind;
+
+    if (passthrough.size() > 0) {
+        options->n_args = passthrough.size();
+
+        size_t sz = options->n_args * sizeof(char *);
+        for (int i = 0; i < passthrough.size(); ++i) sz += passthrough[i].size() + 1;
+
+        char *args = (char *)malloc(sz);
+        options->args = (char **)args;
+        args += options->n_args * sizeof(char *);
+
+        for (int i = 0; i < options->n_args; ++i) {
+            options->args[i] =
+                    strncpy(args, passthrough[i].c_str(), passthrough[i].size() + 1);
+            args += passthrough[i].size() + 1;
+        }
+
+        assert(((char *)options->args) + sz == args);
+    }
 }
 // this stuff is from lua's lua.c repl implementation:
 
